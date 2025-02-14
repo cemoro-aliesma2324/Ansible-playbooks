@@ -1,0 +1,7 @@
+---
+app_user: "user"
+http_ip: "10.0.2.20"
+http_host: "web2"
+http_conf: "web2.conf"
+http_port: "8080"
+disable_default: true

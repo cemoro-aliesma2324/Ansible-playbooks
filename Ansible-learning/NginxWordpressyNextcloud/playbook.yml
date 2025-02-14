@@ -1,0 +1,118 @@
+- name: Menú interactivo en Ansible
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Mostrar opción seleccionada
+      debug:
+        msg: "Has seleccionado la opción: {{ menu_option }}"
+
+    - name: Instalacion de Wordpress 1
+      when: menu_option == "1"
+      block:
+        - name: Install Prerequisites
+          apt:
+            name: "{{ item }}"
+            update_cache: yes
+            state: latest
+            force_apt_get: yes
+          loop: ['aptitude']
+          
+        - name: Install nginx Packages
+          apt:
+            name: "{{ item }}"
+            update_cache: yes
+            state: latest
+          loop: ['nginx','apache2','mariadb','','']
+
+        # Nginx Configuration
+        - name: Sets Nginx conf file
+          template:
+            src: "files/nginx.conf.j2"
+            dest: "/etc/nginx/sites-available/{{ http_conf }}"
+
+        - name: Enables new site
+          file:
+            src: "/etc/nginx/sites-available/{{ http_conf }}"
+            dest: "/etc/nginx/sites-enabled/{{ http_conf }}"
+            state: link
+          notify: Reload Nginx
+
+        - name: Removes "default" site
+          file:
+            path: "/etc/nginx/sites-enabled/default"
+            state: absent
+          notify: Reload Nginx
+
+        # Sets Up PHP Info Page
+        - name: Sets Up PHP Info Page
+          template:
+            src: "files/info.php.j2"
+            dest: "/var/www/html/info.php"
+
+        - name: Crear clave privada y certificado autofirmado
+          command: >
+            openssl req -x509 -nodes -days 3650 -newkey rsa:2048
+            -keyout /etc/ssl/private/vb.key
+            -out /etc/ssl/certs/vb.crt
+            -subj "/CN=vb"
+
+        - name: Create Proxy
+          ansible.builtin.copy:
+            dest: /etc/nginx/sites-available/proxy
+            content: |
+              server {
+                listen 80;
+                server_name vb;
+                return 301 https://vb;
+              }
+              upstream backend_servers {
+                server wp:8080;
+                server nc:8080;
+              }
+              server {
+                listen 443 ssl;
+                server_name vb;
+                ssl_certificate /etc/ssl/certs/vb.crt;
+                ssl_certificate_key /etc/ssl/private/vb.key;
+                location / {
+                  proxy_pass http://backend_servers;
+                  proxy_set_header Host $host;
+                  proxy_set_header X-Real-IP $remote_addr;
+                  proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+                  proxy_set_header X-Forwarded-Proto $scheme;
+                }
+              }
+          notify: Reload Nginx
+
+        - name: Crear enlace simbólico de proxy
+          file:
+            src: /etc/nginx/sites-available/proxy
+            dest: /etc/nginx/sites-enabled/proxy
+            state: link
+          notify: Reload Nginx
+
+    - name: Ejecutar acción para opción 2
+      when: menu_option == "2"
+      debug:
+        msg: "Instalacion de NextCloud 2"
+
+    - name: Ejecutar acción para opción 3
+      when: menu_option == "3"
+      debug:
+        msg: "Instalacion de Wordpress y Nextcloud 3"
+
+    - name: Acción para entrada no válida
+      when: menu_option not in ["1", "2", "3"]
+      debug:
+        msg: "Opción no válida. Por favor, selecciona 1, 2 o 3."
+
+  handlers:
+    - name: Reload Nginx
+      service:
+        name: nginx
+        state: reloaded
+
+    - name: Restart Nginx
+      service:
+        name: nginx
+        state: restarted

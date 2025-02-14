@@ -1,0 +1,7 @@
+---
+app_user: "user"
+http_ip: "10.0.2.10"
+http_host: "web1"
+http_conf: "web1.conf"
+http_port: "8080"
+disable_default: true

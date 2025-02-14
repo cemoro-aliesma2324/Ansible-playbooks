@@ -1,0 +1,161 @@
+##################################################
+# DO Community Playbooks: LEMP on Ubuntu 18.04
+##################################################
+- hosts: all
+  become: true
+  vars_files:
+    - vars/web1.yml
+
+  tasks:
+    - name: Install prerequisites
+      apt: name={{ item }} update_cache=yes state=latest force_apt_get=yes
+      loop: [ 'aptitude' ]
+
+  #Apache Configuration
+    - name: Install Apache
+      apt: name={{ item }} update_cache=yes state=latest
+      loop: [ 'apache2']
+
+    - name: Create document root
+      file:
+        path: "/var/www/{{ http_host }}"
+        state: directory
+        owner: "www-data"
+        mode: '0755'
+
+    - name: Set up Apache virtualhost
+      template:
+        src: "files/apache.conf.j2"
+        dest: "/etc/apache2/sites-available/{{ http_conf }}"
+      notify: Reload Apache
+
+    - name: Enable new site
+      shell: /usr/sbin/a2ensite {{ http_conf }}
+      notify: Reload Apache
+
+    - name: Disable default Apache site
+      shell: /usr/sbin/a2dissite 000-default.conf
+      when: disable_default
+      notify: Reload Apache
+
+  # PHP Info Page
+    - name: Sets Up PHP Info Page
+      template:
+        src: "files/web1.html.j2"
+        dest: "/var/www/{{ http_host }}/index.html"
+
+    - name: Edit line
+      ansible.builtin.lineinfile:
+        path: /etc/apache2/ports.conf
+        regexp: "^Listen .*"
+        line: "Listen 8080"
+  handlers:
+    - name: Reload Apache
+      service:
+        name: apache2
+        state: reloaded
+
+    - name: Restart Apache
+      service:
+        name: apache2
+        state: restarted
+
+- hosts: all
+  become: true
+  vars_files:
+    - vars/default.yml
+
+  tasks:
+    - name: Install Prerequisites
+      apt:
+        name: "{{ item }}"
+        update_cache: yes
+        state: latest
+        force_apt_get: yes
+      loop: ['aptitude']
+
+    - name: Install LEMP Packages
+      apt:
+        name: "{{ item }}"
+        update_cache: yes
+        state: latest
+      loop: ['nginx']
+
+    # Nginx Configuration
+    - name: Sets Nginx conf file
+      template:
+        src: "files/nginx.conf.j2"
+        dest: "/etc/nginx/sites-available/{{ http_conf }}"
+
+    - name: Enables new site
+      file:
+        src: "/etc/nginx/sites-available/{{ http_conf }}"
+        dest: "/etc/nginx/sites-enabled/{{ http_conf }}"
+        state: link
+      notify: Reload Nginx
+
+    - name: Removes "default" site
+      file:
+        path: "/etc/nginx/sites-enabled/default"
+        state: absent
+      notify: Reload Nginx
+
+    # Sets Up PHP Info Page
+    - name: Sets Up PHP Info Page
+      template:
+        src: "files/info.php.j2"
+        dest: "/var/www/html/info.php"
+
+    - name: Crear clave privada y certificado autofirmado
+      command: >
+        openssl req -x509 -nodes -days 3650 -newkey rsa:2048
+        -keyout /etc/ssl/private/vb.key
+        -out /etc/ssl/certs/vb.crt
+        -subj "/CN=vb"
+
+    - name: Create Proxy
+      ansible.builtin.copy:
+        dest: /etc/nginx/sites-available/proxy
+        content: |
+          server {
+            listen 80;
+            server_name vb;
+            return 301 https://vb;
+          }
+          upstream backend_servers {
+            server 127.0.0.1:8080;
+            server 127.0.0.1:80;
+          }
+          server {
+            listen 443 ssl;
+            server_name vb;
+            ssl_certificate /etc/ssl/certs/vb.crt;
+            ssl_certificate_key /etc/ssl/private/vb.key;
+            location / {
+              proxy_pass http://backend_servers;
+              proxy_set_header Host $host;
+              proxy_set_header X-Real-IP $remote_addr;
+              proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+              proxy_set_header X-Forwarded-Proto $scheme;
+            }
+          }
+      notify: Reload Nginx
+
+    - name: Crear enlace simbólico de proxy
+      file:
+        src: /etc/nginx/sites-available/proxy
+        dest: /etc/nginx/sites-enabled/proxy
+        state: link
+      notify: Reload Nginx
+
+  handlers:
+    - name: Reload Nginx
+      service:
+        name: nginx
+        state: reloaded
+
+    - name: Restart Nginx
+      service:
+        name: nginx
+        state: restarted
+

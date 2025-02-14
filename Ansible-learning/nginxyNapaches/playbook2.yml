@@ -1,0 +1,114 @@
+##################################################
+# DO Community Playbooks: LAMP on Ubuntu 18.04
+##################################################
+---
+- hosts: all
+  become: true
+  vars_prompt:
+    - name: "apache_ip"
+      prompt: "Ingresa la ip del servidor apache"
+      private: no
+    - name: "name_server"
+      prompt: "Ingresa el hostname"
+      private: no
+    - name: "http_port"
+      prompt: "Ingresa el puerto"
+      private: no
+  tasks:
+    - name: Ip
+      set_fact:
+        apache_servers: "{{apache_ip}}"
+
+    - name: Hostname
+      set_fact:
+        apache_servers: "{{name_server}}"
+
+    - name: http_port
+      set_fact:
+        apache_servers: "{{http_port}}"
+
+    - name: mostrar ip
+      debug:
+        msg: "{{apache_ip}}, {{name_server}}, {{http_port}}"
+
+    - name: Install prerequisites
+      apt: name={{ item }} update_cache=yes state=latest force_apt_get=yes
+      loop: [ 'aptitude' ]
+
+  #Apache Configuration
+    - name: Install Apache
+      apt: name={{ item }} update_cache=yes state=latest
+      loop: [ 'apache2']
+
+    - name: Create document root
+      file:
+        path: "/var/www/{{ name_server }}"
+        state: directory
+        owner: "www-data"
+        mode: '0755'
+
+    - name: Set up Apache virtualhost
+      template:
+        src: "files/vhosts.j2"
+        dest: "/etc/apache2/sites-available/{{ name_server }}.conf"
+      notify: Reload Apache
+
+    - name: Enable new site
+      shell: /usr/sbin/a2ensite {{ name_server }}.conf
+      notify: Reload Apache
+
+    - name: Disable default Apache site
+      shell: /usr/sbin/a2dissite 000-default.conf
+      notify: Reload Apache
+
+  # PHP Info Page
+    - name: Sets Up html Info Page
+      template:
+        src: "files/web.html.j2"
+        dest: "/var/www/{{ name_server }}/index.html"
+    - name: Remove listen PlaceHolderIp
+      ansible.builtin.lineinfile:
+        path: /etc/nginx/sites-available/proxy
+        regexp: "^server 127.0.0.1;"
+        state: absent
+      notify: Restart Nginx
+    - name: Add ip and ports to proxy
+      lineinfile:
+        path: /etc/nginx/sites-available/proxy
+        insertafter: "^upstream backend_servers {"
+        line: "  server {{apache_ip}}:{{http_port}};"
+      notify: Reload Nginx
+    - name: Remove listen Listen 80
+      ansible.builtin.lineinfile:
+        path: /etc/apache2/ports.conf
+        regexp: "^Listen 80$"
+        state: absent
+      notify: Restart Nginx
+
+    - name: Add listen to ports.conf
+      lineinfile:
+        path: /etc/apache2/ports.conf
+        insertafter: "^# /etc"
+        line: "Listen {{ http_port }}"
+      notify: Restart Nginx
+
+  handlers:
+    - name: Reload Apache
+      service:
+        name: apache2
+        state: reloaded
+
+    - name: Restart Apache
+      service:
+        name: apache2
+        state: restarted
+
+    - name: Reload Nginx
+      service:
+        name: nginx
+        state: reloaded
+
+    - name: Restart Nginx
+      service:
+        name: nginx
+        state: restarted
